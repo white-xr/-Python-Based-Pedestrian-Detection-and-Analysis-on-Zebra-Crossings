@@ -1,0 +1,8 @@
+imutils>=0.5.4
+lap>=0.5.13
+matplotlib>=3.8
+numpy==1.26.4
+opencv-python>=4.8
+Pillow>=10.0
+PyQt5>=5.15.10
+ultralytics>=8.0.0

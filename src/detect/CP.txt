@@ -1,0 +1,187 @@
+from ultralytics import YOLO
+import cv2
+import numpy as np
+from collections import defaultdict
+
+class CrosswalkPersonDetector
+    def __init__(self, person_model='yolov8n.pt', zebra_model='zebra.pt', device='cpu')
+        try
+            self.person_model = YOLO(person_model).to(device)  # 加载行人检测模型
+            self.zebra_model = YOLO(zebra_model).to(device)   # 加载斑马线检测模型
+            self.PERSON_CLASS_ID = 0  # COCO数据集中的'person'类别ID
+            print(模型加载成功)
+        except Exception as e
+            print(f模型加载失败 {e})
+            raise
+        self.tracker = defaultdict(list)  # 存储行人ID和历史状态
+        self.frame_count = 0  # 帧计数，用于控制推理频率
+        self.last_zebra_boxes = []  # 保存最近的斑马线检测结果
+
+    def calculate_iou(self, box1, box2)
+        计算两个边界框的IoU
+        x1, y1, x2, y2 = box1
+        x3, y3, x4, y4 = box2
+
+        x_inter1 = max(x1, x3)
+        y_inter1 = max(y1, y3)
+        x_inter2 = min(x2, x4)
+        y_inter2 = min(y2, y4)
+
+        if x_inter2 = x_inter1 or y_inter2 = y_inter1
+            return 0.0
+
+        area_inter = (x_inter2 - x_inter1)  (y_inter2 - y_inter1)
+        area_box1 = (x2 - x1)  (y2 - y1)
+        area_box2 = (x4 - x3)  (y3 - y4)
+        area_union = area_box1 + area_box2 - area_inter
+
+        iou = area_inter  area_union if area_union  0 else 0.0
+        return iou
+
+    def simple_tracker(self, person_boxes)
+        简单跟踪：基于IoU匹配当前帧和上一帧的行人
+        current_frame_ids = {}
+        new_tracker = defaultdict(list)
+
+        if not self.tracker  # 第一帧，直接分配ID
+            for idx, box in enumerate(person_boxes)
+                self.tracker[idx].append(box)
+                current_frame_ids[idx] = box
+            return current_frame_ids
+
+        # 匹配当前帧和上一帧的行人
+        for idx, prev_box in self.tracker.items()
+            prev_box = prev_box[-1]  # 上一帧的box
+            max_iou = 0
+            matched_box = None
+            matched_new_idx = None
+
+            for new_idx, box in enumerate(person_boxes)
+                iou = self.calculate_iou(prev_box, box)
+                if iou  max_iou and iou  0.5  # IoU阈值
+                    max_iou = iou
+                    matched_box = box
+                    matched_new_idx = new_idx
+
+            if matched_box is not None
+                new_tracker[idx].append(matched_box)
+                current_frame_ids[idx] = matched_box
+                person_boxes.pop(matched_new_idx)
+
+        # 未匹配的box分配新ID
+        for idx, box in enumerate(person_boxes)
+            new_id = len(new_tracker)
+            new_tracker[new_id].append(box)
+            current_frame_ids[new_id] = box
+
+        self.tracker = new_tracker
+        return current_frame_ids
+
+    def preprocess_frame(self, frame)
+        预处理视频帧，确保格式正确
+        if frame is None
+            raise ValueError(视频帧为空)
+        if len(frame.shape) != 3 or frame.shape[2] != 3
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        return frame
+
+    def detectVideo(self, frame)
+        try
+            # 预处理帧
+            frame = self.preprocess_frame(frame)
+            self.frame_count += 1
+
+            # 每5帧进行一次完整检测，其他帧使用跟踪
+            if self.frame_count % 5 == 0
+                person_results = self.person_model.predict(source=frame, conf=0.25, verbose=False)[0]
+                zebra_results = self.zebra_model.predict(source=frame, conf=0.25, verbose=False)[0]
+
+                person_boxes = []
+                if person_results.boxes
+                    for box in person_results.boxes
+                        if int(box.cls) == self.PERSON_CLASS_ID
+                            person_boxes.append(box.xyxy.cpu().numpy()[0])
+                    print(f检测到行人数量 {len(person_boxes)})
+                else
+                    print(未检测到行人)
+
+                zebra_boxes = zebra_results.boxes.xyxy.cpu().numpy() if zebra_results.boxes else []
+                print(f检测到斑马线数量 {len(zebra_boxes)})
+                self.last_zebra_boxes = zebra_boxes  # 更新缓存
+            else
+                # 非推理帧，使用上一帧的斑马线检测结果和跟踪的行人位置
+                person_boxes = [box for box in self.tracker.values() if box]
+                person_boxes = [box[-1] for box in person_boxes]  # 使用最新位置
+                zebra_boxes = self.last_zebra_boxes
+                print(f使用跟踪，当前行人数量 {len(person_boxes)})
+
+            # 跟踪行人
+            person_boxes_with_ids = self.simple_tracker(person_boxes)
+
+            combined_frame = frame.copy()
+
+            # 绘制斑马线框
+            for box in zebra_boxes
+                x1, y1, x2, y2 = map(int, box)
+                cv2.rectangle(combined_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                cv2.putText(combined_frame, Zebra, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+
+            person_count = 0
+            for person_id, box in person_boxes_with_ids.items()
+                x1, y1, x2, y2 = map(int, box)
+                center_y = (y1 + y2)  2  # 行人中心点
+                bottom_y = y2  # 行人脚部位置
+                on_zebra = False
+                max_iou = 0.0
+
+                for zbox in self.last_zebra_boxes
+                    iou = self.calculate_iou(box, zbox)
+                    if iou  max_iou
+                        max_iou = iou
+                    zx1, zy1, zx2, zy2 = map(int, zbox)
+                    if iou  0.3 or (center_y = zy1 and center_y = zy2) or (bottom_y = zy1 and bottom_y = zy2)
+                        on_zebra = True
+                        break
+
+                # 平滑状态：如果前几帧为OnZebra，则倾向于保持
+                if person_id in self.tracker and len(self.tracker[person_id])  1
+                    prev_status = any(
+                        self.calculate_iou(self.tracker[person_id][-2], zbox)  0.3 or
+                        (self.tracker[person_id][-2][1] + self.tracker[person_id][-2][3])  2 in range(int(zbox[1]), int(zbox[3])) or
+                        self.tracker[person_id][-2][3] in range(int(zbox[1]), int(zbox[3]))
+                        for zbox in self.last_zebra_boxes
+                    )
+                    if prev_status
+                        on_zebra = True
+
+                color = (0, 255, 0) if on_zebra else (0, 0, 255)
+                label = fOnZebra {max_iou.2f} if on_zebra else fOffZebra {max_iou.2f}
+                cv2.rectangle(combined_frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(combined_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+                person_count += 1
+
+            return frame, combined_frame, person_count
+        except Exception as e
+            print(f检测错误 {e})
+            return frame, frame, 0
+
+# 示例用法
+if __name__ == __main__
+    detector = CrosswalkPersonDetector(device='cpu')  # 改为'cuda'如果有GPU
+    cap = cv2.VideoCapture(0)  # 替换为视频文件路径（如'video.mp4'）
+    if not cap.isOpened()
+        print(无法打开视频流)
+        exit()
+
+    while cap.isOpened()
+        ret, frame = cap.read()
+        if not ret
+            print(无法读取视频帧)
+            break
+        original_frame, processed_frame, count = detector.detectVideo(frame)
+        cv2.imshow('Crosswalk Detection', processed_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q')
+            break
+    cap.release()
+    cv2.destroyAllWindows()

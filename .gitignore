@@ -1,0 +1,30 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+
+# Virtual environments
+.venv/
+.venv312/
+venv/
+
+# IDE settings
+.idea/
+.vs/
+
+# Logs
+*.log
+
+# Model files and weight folders
+weights/
+*.pt
+
+# Large generated artifacts
+*.zip
+*.mp4
+
+# OS files
+Thumbs.db
+.DS_Store
+
